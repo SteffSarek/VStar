@@ -1,0 +1,2 @@
+# VStar
+variable star analyzer
