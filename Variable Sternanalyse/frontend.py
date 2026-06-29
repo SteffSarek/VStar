@@ -286,12 +286,26 @@ class VariableStarApp(ctk.CTk):
     def handle_solve(self):
         solver = self.config.get("solver", "ASTAP")
         
+        # --- NEU: Button-Sperre gegen versehentlichen Doppelklick / Maus-Prellen ---
         self.btn_solve.configure(
-            text="Wird gelöst... (Abbrechen)", 
-            fg_color="#c93434", 
-            hover_color="#9c2727", 
-            command=self.handle_cancel_solve
+            state="disabled", 
+            text="Starte...", 
+            fg_color="#c93434"
         )
+        
+        # Den Abbrechen-Button erst nach 600 Millisekunden aktivieren
+        def enable_cancel():
+            # Nur aktivieren, wenn er nicht in der Zwischenzeit schon rasend schnell fertig wurde
+            if getattr(self, 'is_solving', False):
+                self.btn_solve.configure(
+                    state="normal",
+                    text="Wird gelöst... (Abbrechen)", 
+                    hover_color="#9c2727", 
+                    command=self.handle_cancel_solve
+                )
+        self.after(600, enable_cancel)
+        # -------------------------------------------------------------------------
+        
         self.result_textbox.insert("end", f"\n\nStarte Plate-Solving ({solver})... Bitte warten.\n")
         
         self.is_solving = True
