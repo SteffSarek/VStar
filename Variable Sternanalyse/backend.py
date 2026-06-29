@@ -407,38 +407,37 @@ class AstroBackend:
             t_coord = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
             target_mag = None
 
+            # ---------------- AB HIER ERSETZEN ----------------
+            # 1. Gaia DR3 fragen (Sucht im Umkreis und nimmt den HELLSTEN Stern)
             try:
-                custom_simbad = Simbad()
-                custom_simbad.add_votable_fields('flux(V)', 'flux(G)')
-                target_res = custom_simbad.query_region(t_coord, radius=2.0 * u.arcmin)
-                
-                if target_res is not None:
-                    v_col = next((c for c in target_res.colnames if 'FLUX' in c.upper() and '_V' in c.upper()), None)
-                    g_col = next((c for c in target_res.colnames if 'FLUX' in c.upper() and '_G' in c.upper()), None)
-                    
-                    for row in target_res:
-                        if v_col and not np.ma.is_masked(row[v_col]):
-                            try: target_mag = float(row[v_col])
-                            except: pass
-                        if target_mag is None and g_col and not np.ma.is_masked(row[g_col]):
-                            try: target_mag = float(row[g_col])
-                            except: pass
+                v_gaia_target = Vizier(columns=['Gmag'], row_limit=50)
+                res = v_gaia_target.query_region(t_coord, radius=15 * u.arcsec, catalog='I/355/gaiadr3')
+                if res and len(res) > 0:
+                    # Sammle alle Helligkeiten und filtere leere Einträge heraus
+                    mags = [float(row['Gmag']) for row in res[0] if not np.ma.is_masked(row['Gmag'])]
+                    if mags:
+                        target_mag = min(mags)  # <-- WICHTIG: Nimmt den kleinsten Wert (hellster Stern)
             except: pass
 
+            # 2. VSX Katalog als Backup (Nimmt ebenfalls den hellsten)
             if target_mag is None:
                 try:
-                    v = Vizier(columns=['max'], row_limit=3)
-                    vsx_res = v.query_region(t_coord, radius=2.0*u.arcmin, catalog='B/vsx/vsx')
+                    v_vsx = Vizier(columns=['max'], row_limit=10)
+                    vsx_res = v_vsx.query_region(t_coord, radius=15 * u.arcsec, catalog='B/vsx/vsx')
                     if vsx_res and len(vsx_res) > 0:
+                        mags = []
                         for row in vsx_res[0]:
                             if not np.ma.is_masked(row['max']):
                                 m_str = str(row['max']).replace('V', '').replace('p', '').replace('<', '').replace('>', '').replace('(', '').replace(')', '').strip()
-                                try: target_mag = float(m_str)
+                                try: mags.append(float(m_str))
                                 except: pass
+                        if mags:
+                            target_mag = min(mags)
                 except: pass
 
             if target_mag is None:
                 return False, None, "Helligkeit des Zielsterns nicht ermittelbar."
+            # ---------------- BIS HIER ERSETZEN ----------------
 
             try:
                 v_gaia = Vizier(columns=['Source', '_RAJ2000', '_DEJ2000', 'Gmag'], 
@@ -472,8 +471,9 @@ class AstroBackend:
                         
                         # --- NEU: Auto-Snap für den Vergleichsstern ---
                         snap_pos, is_ok = self._micro_centroid(self.current_image_data, (px, py), box=60)
-                        if is_ok:
-                            px, py = snap_pos
+                        if not is_ok:
+                            continue  # <--- WICHTIG: Wenn der Stern auf dem Bild unsichtbar ist, überspringen!
+                        px, py = snap_pos
                         # ----------------------------------------------
                         
                         if abs(px - target_x) > 40 or abs(py - target_y) > 40:
