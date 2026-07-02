@@ -751,13 +751,19 @@ class VariableStarApp(ctk.CTk):
         
         if len(x) > 5:
             try:
-                p1, p99 = np.percentile(y, 1), np.percentile(y, 99)
-                mask = (y >= p1) & (y <= p99)
-                z = np.polyfit(x[mask], y[mask], 4)
-                p = np.poly1d(z)
-                x_trend = np.linspace(min(x), max(x), 100)
-                y_trend = p(x_trend)
-                self.ax.plot(x_trend, y_trend, "r--", linewidth=1.5, label='Trendlinie (Poly 4)')
+                # --- NEU: Gleitender Durchschnitt folgt jeder Kurvenform ---
+                # Fenstergröße dynamisch anpassen (ca. 5% der Datenpunkte, mind. 3, max 25)
+                w_size = max(3, min(25, len(y) // 20))
+                
+                # Array an den Rändern polstern, damit es exakt gleich lang bleibt
+                pad_left = w_size // 2
+                pad_right = w_size - 1 - pad_left
+                y_padded = np.pad(y, (pad_left, pad_right), mode='edge')
+                
+                # Gleitenden Durchschnitt berechnen
+                y_smooth = np.convolve(y_padded, np.ones(w_size)/w_size, mode='valid')
+                
+                self.ax.plot(x, y_smooth, "r--", linewidth=1.5, label='Gleitender Durchschnitt')
             except Exception as e: pass
 
         self.ax.invert_yaxis()

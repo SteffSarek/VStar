@@ -124,49 +124,63 @@ class AstroBackend:
                 # Scatter-Plot der rohen Messpunkte
                 ax.plot(t, y, marker='d', markersize=4, linestyle='', color='black', alpha=0.5, label='Messwerte')
                 
-                # --- NEU: Trendlinie berechnen und zeichnen ---
-                if len(t) > 5:
-                    try:
-                        # Ausreißer filtern (1. und 99. Perzentil) für robusteren Fit
-                        p1, p99 = np.percentile(y, 1), np.percentile(y, 99)
-                        mask = (y >= p1) & (y <= p99)
-                        
-                        # FIX für RankWarning: Große JD-Zahlen für die Mathematik verkleinern
-                        t_offset = t - t[0] 
-                        
-                        z = np.polyfit(t_offset[mask], y[mask], 4)
-                        p = np.poly1d(z)
-                        
-                        t_trend = np.linspace(min(t), max(t), 200)
-                        t_trend_offset = t_trend - t[0] # Den gleichen Offset beim Auswerten nutzen
-                        y_trend = p(t_trend_offset)
-                        
-                        # Als gestrichelte schwarze Linie plotten
-                        ax.plot(t_trend, y_trend, color='black', linestyle='--', linewidth=1.5, alpha=0.9, label='Trend (Poly 4)')
-                    except Exception: 
-                        pass
-                # ----------------------------------------------
-                
                 ax.invert_yaxis()  # Helligkeit: kleinerer Wert = heller (weiter oben)
                 ax.set_ylabel(f"delta mag ({filter_band}) instr", weight='bold', color='black')
                 ax.set_xlabel("JD heliozentrisch (UTC)", weight='bold', color='black')
                 ax.tick_params(colors='black')
                 ax.grid(True, linestyle=':', color='gray', alpha=0.5)
+
+                # --- NEU: Lokale Parabel für das exakte Extremum ---
+                # 1. Grobes Extremum finden (geglättet, um Ausreißer zu ignorieren!)
+                # Erst zeitlich sortieren, damit die Glättung funktioniert
+                sort_idx = np.argsort(t)
+                t_sorted = t[sort_idx]
+                y_sorted = y[sort_idx]
                 
+                # Gleitenden Durchschnitt berechnen (wie in der GUI-Vorschau)
+                w_size = max(3, min(25, len(y_sorted) // 20))
+                pad_left = w_size // 2
+                pad_right = w_size - 1 - pad_left
+                y_padded = np.pad(y_sorted, (pad_left, pad_right), mode='edge')
+                y_smooth = np.convolve(y_padded, np.ones(w_size)/w_size, mode='valid')
+                
+                # Jetzt das Extremum der GEGLÄTTETEN Kurve suchen
+                smooth_idx = np.argmax(y_smooth) if extremum == "min" else np.argmin(y_smooth)
+                t_raw_ex = t_sorted[smooth_idx]
+                
+                # 2. Fenster von ca. 1 Stunde (+/- 0.04 Tage) um das Extremum bilden
+                window_mask = np.abs(t - t_raw_ex) < 0.04
+                
+                # Fallback: Falls zu wenige Bilder gemacht wurden, nimm die nächsten 30 Punkte
+                if np.sum(window_mask) < 15:
+                    sort_idx = np.argsort(np.abs(t - t_raw_ex))
+                    window_mask = sort_idx[:min(len(t), 30)]
+                    
+                t_win = t[window_mask]
+                y_win = y[window_mask]
+                
+                # 3. Parabel (Polynom 2. Grades) fitten
+                t_offset = t_win - t_win[0]
+                z = np.polyfit(t_offset, y_win, 2)
+                p = np.poly1d(z)
+                
+                t_eval = np.linspace(t_win.min(), t_win.max(), 1000)
+                y_eval = p(t_eval - t_win[0])
+                
+                # 4. Mathematisch exaktes Minimum/Maximum auf der Kurve finden
+                fit_idx = np.argmax(y_eval) if extremum == "min" else np.argmin(y_eval)
+                ex_t = t_eval[fit_idx]
+                ex_y = y_eval[fit_idx]
+                
+                # 5. Parabel in den Graphen einzeichnen
+                ax.plot(t_eval, y_eval, color='black', linestyle='--', linewidth=2.5, label='Lokaler Fit (Parabel)')
+                # ----------------------------------------------------
+
                 # Legende anzeigen
                 ax.legend(loc="best", frameon=True, facecolor="white", edgecolor="black", fontsize=8)
                 
                 for spine in ax.spines.values():
                     spine.set_edgecolor('black')
-                
-                # Finde Extremum (Min oder Max)
-                if extremum == "min":
-                    idx = np.argmax(y) # Schwächster Punkt in Magnitude
-                else:
-                    idx = np.argmin(y) # Hellster Punkt in Magnitude
-                    
-                ex_t = t[idx]
-                ex_y = y[idx]
                 
                 # Pfeil-Markierung
                 arrow_y = ex_y + 0.15 * (np.max(y) - np.min(y)) if extremum == "min" else ex_y - 0.15 * (np.max(y) - np.min(y))
@@ -191,9 +205,9 @@ class AstroBackend:
                     ("Vergl.-Sterne:", f"C = {comp_name} (mag = {comp_mag})"),
                     ("Fotometer, Filter:", f"CCD mit {filter_band}-Filter"),
                     ("Fotometrie mit:", "VStar Analyzer v1.0"),
-                    ("Auswertung:", f"Polynom 4. Grades"),
+                    ("Auswertung:", f"Lokale Parabel (Polynom 2)"),
                     ("Luftmasse X =", "Optionale Angabe"),
-                    (f"n = {len(t)}", ""),
+                    ("Anzahl Messpunkte n =", f"{len(t)}"),
                     ("Beobachter:", f"{bav_obs}"),
                     ("Bemerkungen:", f"{remarks}")
                 ]
